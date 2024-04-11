@@ -1,0 +1,422 @@
+---
+title: "ISEFcap"
+author: "Conip"
+date: "19-02-2021"
+output: html_document
+---
+
+```{r}
+library(imputeTS) #para interpolar
+library(ggcorrplot)
+library(tidytext)
+library(tidyverse) 
+library(igraph)
+library(ggraph)
+library(tm) # espec?fico para miner?a de textos. 
+library(SnowballC)  
+library(dplyr) 
+library(readr)
+library(NLP) 
+library(pdftools)
+library(rJava)
+library(xlsx)
+library(textclean)
+library(githubinstall)
+library(pluralize)
+library(plyr)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(ngram)
+library(readxl)
+library(magrittr)
+library(reshape)
+library(ggcharts)
+library(broom)
+library(stargazer)
+library(writexl)
+library(openxlsx)
+library(corrplot)
+library(scales)
+library(gridExtra)
+library(stringi)
+```
+
+Direcciones:
+```{r}
+#Aquí están los ipom por capítulo por palabra
+path_ipom="C:/Users/Asus/Desktop/Practica/Codigos_IPoM/capitulos/cap_x_palabraIPoM/"
+#Diccionario para hacer match con palabras que tienen tono
+path_diccionario="C:/Users/Asus/Desktop/Practica/bcch.csv"
+#Aquí están los ief por capítulo por palabra
+path_ief="C:/Users/Asus/Desktop/Practica/Codigos_IEF/capitulos/cap_x_palabra/"
+#Aquí se guardará el isef por capítulos
+path1="C:/Users/Asus/Desktop/Practica/"
+#Aquí guardaremos los gráficos
+pathy="C:/Users/Asus/Desktop/Practica/"
+```
+
+
+## *IPOM*
+```{r}
+files<- dir(path_ipom, pattern = "*.txt", full.names = TRUE)
+
+#Diccionario
+words <- read.csv(path_diccionario, header = TRUE, sep=";")
+words$palabra <- trimws(words$palabra)
+
+tabla <-data.frame()
+FS<-data.frame(matrix(ncol = 6, nrow = 0))
+i=0
+#reading each file within the range and append them to create one file
+for (f in files){
+  i=i+1
+  # Crear data frame para leer 1 archivo IPoM como unigramas
+  DF <- read.csv(f)
+  DF <- as.character(DF[,2]) %>% unlist()
+  tabla <- data.frame(table(DF))
+  tabla$nombre_archivo<- as.character(gsub(".txt", "", f))
+  tabla <- tabla[order(-tabla$Freq), ]
+  names(tabla)[1] <- "palabra"
+  names(tabla)[2] <- "frec"
+  tabla$prop <- prop.table(tabla$frec)*100
+#  tabla$fecha<- as.character(gsub(".txt", "", f))
+
+  #Total Palabras
+  total_palabras <- sum(tabla$frec)
+  
+  #Crear Bigrama del IPoM
+  DF <-  read.csv(f)
+  DF <- as.character(DF[,2]) %>% unlist()
+  bigramas <-lapply(ngrams(DF,2), paste, collapse=" ") %>% unlist
+  tabla_bi <- as.data.frame(table(bigramas))
+  tabla_bi$nombre_archivo<- as.character(gsub(".txt", "", f))
+  names(tabla_bi)[1] <- "palabra"
+  names(tabla_bi)[2] <- "frec"
+  
+  tabla_bi$prop <- prop.table(tabla_bi$frec)*100
+#  tabla_bi$fecha<- as.character(gsub(".txt", "", f))
+  
+  #Append unigramas y bigramas
+  tabla <- rbind(tabla, tabla_bi)
+  rm(tabla_bi)
+  
+  #Merge IPoM con diccionario
+  tabla <- merge(tabla,words,by="palabra", all.x=T)
+  
+  #Indicador
+  #Multiplicar frec*tipo de palabra
+  tabla$total_positive <- tabla$frec*tabla$Positive
+  tabla$total_negative <- tabla$frec*tabla$Negative
+  tabla$total_negative_positive <- tabla$frec*tabla$Negative_positive 
+  
+  fpositive <- sum(as.numeric(tabla$total_positive), na.rm = TRUE)
+  fnegative <- sum(as.numeric(tabla$total_negative), na.rm = TRUE)
+  fnegative_positive <- sum(as.numeric(tabla$total_negative_positive), na.rm = TRUE)
+  
+  fnegative <- fnegative + fnegative_positive
+  fpositive <- fpositive - fnegative_positive
+  total  <-fnegative+fpositive
+  
+  #Indice
+  findex<-(fnegative-fpositive)/total
+  
+  FS1<-data.frame(matrix(ncol = 6, nrow = 0))
+  col<-c("Nombre_archivo",  "findex", "Npositive","Nnegative", "Total", "Total_Palabras")
+  colnames(FS1) <- col
+  FS1[nrow(FS1) + 1,] = list(gsub(".txt","",f),findex,fpositive,fnegative,total, total_palabras)
+  
+  FS  <- rbind(FS, FS1)
+  FS
+  rm(DF, tabla, fpositive, fnegative, total, FS1, total_palabras)
+}
+
+
+FS <- separate(data = FS, col = Nombre_archivo, into = c("Nombre_archivo", "fecha"), sep = "-")
+FS <- separate(data = FS, col = Nombre_archivo, into = c("Nombre_archivo", "capitulo"), sep = "cap_x_palabraIPoM/",remove=TRUE)
+FS <- subset(FS, select = c(capitulo,fecha, findex, Npositive, Nnegative, Total, Total_Palabras))
+
+#View(FS)
+FS$ISF2 <- (FS$Nnegative-FS$Npositive)/FS$Total_Palabras
+FS$NEG_T <- FS$Nnegative/FS$Total_Palabras
+FS$NEG_R <- FS$Nnegative/FS$Total
+FS$POS_T <- FS$Npositive/FS$Total_Palabras
+FS$POS_R <- FS$Npositive/FS$Total
+
+
+#Obtenemos ISEF estandarizado por promedio:
+desv <- sd(FS$findex)
+prom <- mean(FS$findex)
+FS$ISEF_std <- (FS$findex-prom)/desv
+
+#Obtenemos ISEF estandarizado por promedio:
+desv2 <- sd(FS$ISF2)
+#geometric<-function(x) exp(sum(log(x))/length(x))
+#mediageom <-geometric(FS$ISF2)
+prom2 <- mean(FS$ISF2)
+FS$ISEFT_std <- (FS$ISF2-prom2)/desv2
+
+CAP_IPOM <- FS
+rm(FS)
+#write.csv(FS, "C:/Users/Asus/Desktop/Practica/Codigos_IPoM/ISEF_IPoM_cuerpo.csv")
+CAP_IPOM
+
+```
+
+## *IEF*
+```{r}
+files<- dir(path_ief, pattern = "*.txt", full.names = TRUE)
+
+#Diccionario
+words <- read.csv("C:/Users/Asus/Desktop/Practica/bcch.csv", header = TRUE, sep=";")
+words$palabra <- trimws(words$palabra)
+
+tabla <-data.frame()
+FS<-data.frame(matrix(ncol = 6, nrow = 0))
+i=0
+#reading each file within the range and append them to create one file
+for (f in files){
+  i=i+1
+  # Crear data frame para leer 1 archivo IPoM como unigramas
+  DF <- read.csv(f)
+  DF <- as.character(DF[,2]) %>% unlist()
+  tabla <- data.frame(table(DF))
+  tabla$nombre_archivo<- as.character(gsub(".txt", "", f))
+  tabla <- tabla[order(-tabla$Freq), ]
+  names(tabla)[1] <- "palabra"
+  names(tabla)[2] <- "frec"
+  tabla$prop <- prop.table(tabla$frec)*100
+#  tabla$fecha<- as.character(gsub(".txt", "", f))
+
+  #Total Palabras
+  total_palabras <- sum(tabla$frec)
+  
+  #Crear Bigrama del IPoM
+  DF <-  read.csv(f)
+  DF <- as.character(DF[,2]) %>% unlist()
+  bigramas <-lapply(ngrams(DF,2), paste, collapse=" ") %>% unlist
+  tabla_bi <- as.data.frame(table(bigramas))
+  tabla_bi$nombre_archivo<- as.character(gsub(".txt", "", f))
+  names(tabla_bi)[1] <- "palabra"
+  names(tabla_bi)[2] <- "frec"
+  
+  tabla_bi$prop <- prop.table(tabla_bi$frec)*100
+#  tabla_bi$fecha<- as.character(gsub(".txt", "", f))
+  
+  #Append unigramas y bigramas
+  tabla <- rbind(tabla, tabla_bi)
+  rm(tabla_bi)
+  
+  #Merge IPoM con diccionario
+  tabla <- merge(tabla,words,by="palabra", all.x=T)
+  
+  #Indicador
+  #Multiplicar frec*tipo de palabra
+  tabla$total_positive <- tabla$frec*tabla$Positive
+  tabla$total_negative <- tabla$frec*tabla$Negative
+  tabla$total_negative_positive <- tabla$frec*tabla$Negative_positive 
+  
+  fpositive <- sum(as.numeric(tabla$total_positive), na.rm = TRUE)
+  fnegative <- sum(as.numeric(tabla$total_negative), na.rm = TRUE)
+  fnegative_positive <- sum(as.numeric(tabla$total_negative_positive), na.rm = TRUE)
+  
+  fnegative <- fnegative + fnegative_positive
+  fpositive <- fpositive - fnegative_positive
+  total  <-fnegative+fpositive
+  
+  #Indice
+  findex<-(fnegative-fpositive)/total
+  
+  FS1<-data.frame(matrix(ncol = 6, nrow = 0))
+  col<-c("Nombre_archivo",  "findex", "Npositive","Nnegative", "Total", "Total_Palabras")
+  colnames(FS1) <- col
+  FS1[nrow(FS1) + 1,] = list(gsub(".txt","",f),findex,fpositive,fnegative,total, total_palabras)
+  
+  FS  <- rbind(FS, FS1)
+  FS
+  rm(DF, tabla, fpositive, fnegative, total, FS1, total_palabras)
+}
+
+
+FS <- separate(data = FS, col = Nombre_archivo, into = c("Nombre_archivo", "fecha"), sep = "-")
+FS <- separate(data = FS, col = Nombre_archivo, into = c("Nombre_archivo", "capitulo"), sep = "cap_x_palabra/",remove=TRUE)
+FS <- subset(FS, select = c(capitulo,fecha, findex, Npositive, Nnegative, Total, Total_Palabras))
+
+#View(FS)
+FS$ISF2 <- (FS$Nnegative-FS$Npositive)/FS$Total_Palabras
+FS$NEG_T <- FS$Nnegative/FS$Total_Palabras
+FS$NEG_R <- FS$Nnegative/FS$Total
+FS$POS_T <- FS$Npositive/FS$Total_Palabras
+FS$POS_R <- FS$Npositive/FS$Total
+
+
+#Obtenemos ISEF estandarizado por promedio:
+desv <- sd(FS$findex)
+prom <- mean(FS$findex)
+FS$ISEF_std <- (FS$findex-prom)/desv
+
+#Obtenemos ISEF estandarizado por promedio:
+desv2 <- sd(FS$ISF2)
+#geometric<-function(x) exp(sum(log(x))/length(x))
+#mediageom <-geometric(FS$ISF2)
+prom2 <- mean(FS$ISF2)
+FS$ISEFT_std <- (FS$ISF2-prom2)/desv2
+
+CAP_IEF <- FS
+rm(FS)
+#write.csv(FS, "C:/Users/Asus/Desktop/Practica/Codigos_IPoM/ISEF_IPoM_cuerpo.csv")
+CAP_IEF
+
+```
+
+
+Obtenemos lo que nos servirá
+```{r}
+IPOM <- CAP_IPOM[,c(1,2,3,13,14)]
+IEF <- CAP_IEF[,c(1,2,3,13,14)]
+```
+
+```{r}
+
+wb <- createWorkbook()
+addWorksheet(wb, "isef capitulos ipom")
+addWorksheet(wb, "isef capitulos ief")
+
+writeData(wb, sheet = 1, x = IPOM, startCol = 1, startRow = 1)
+
+writeData(wb, sheet = 2, x = IEF, startCol = 1, startRow = 1)
+
+saveWorkbook(wb, file = paste0(path1,"isef_capitulos.xlsx"))
+```
+
+```{r}
+
+png(paste0(pathy,"isefxcapIEF.png"), width=600,height=700)
+
+ggplot(IEF, aes(ISEF_std, capitulo,colour=capitulo)) +
+        geom_line(aes(group = capitulo))+
+        geom_point()+ theme(legend.position = "none")
+dev.off()
+```
+
+```{r}
+png(paste0(pathy,"isefxcapIPOM.png"), width=600,height=700)
+
+ggplot(IPOM, aes(ISEF_std, capitulo,colour=capitulo)) +
+        geom_line(aes(group = capitulo))+
+        geom_point()+ theme(legend.position = "none")
+dev.off()
+```
+
+# Obtenemos ISEF por fecha y capítulo para el IEF
+```{r}
+IEF1 <- IEF  %>% group_by(fecha) %>% ungroup() %>%  arrange(fecha,ISEF_std) 
+IEF1 <-IEF1[order(IEF1$fecha, IEF1$ISEF_std),]
+IEF1$rownumber = 1:nrow(IEF1)
+
+IEF1$prop <- prop.table(IEF1$ISEF_std)*100
+IEF1
+#View(DF1)
+IEF1$Mes = str_sub(IEF1$fecha,-1,-1)
+IEF1
+```
+
+
+
+# Lo graficamos según fecha: 
+```{r}
+png(paste0(pathy,"IEFcap_cap_trim2.png"), width=2500,height=1300)
+#png("ief_positive.png", width=2500,height=1300)
+tema_graf <-
+  theme_minimal() +
+  theme(text = element_text(family = "serif"), axis.text=element_text(size=18,face="bold"),
+        axis.title=element_text(size=30,face="bold"), strip.text = element_text(size=18,face="bold"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        strip.background = element_rect(fill = "#EBEBEB", colour = NA),
+        legend.position = "none",
+        legend.box.background = element_rect(fill = "#EBEBEB", colour = NA))
+
+#%# Todos
+#IEF_1 <- IEF1[163:183,]
+#IEF_1 <- IEF1[119:162,]
+#IEF_1 <- IEF1[37:71,]
+#IEF_1 <- IEF1[1:37,]
+
+#%# Tercer trimestre
+IEF_1 <- IEF1[IEF1$Mes == "2",]
+#IEF_1<-IEF_1[1:48,]
+IEF_1<-IEF_1[49:96,]
+
+map(c("IEF capitulos 2019-2020"), function(freq10) {
+  IEF_1 %>%
+    group_by(fecha) %>%
+    ggplot() +
+    aes(x=capitulo, y=ISEF_std, fill=fecha) + #REEMPLAZAR FREC POR PROP PARA OBTENER LOS PORCENTAJES CREO
+    geom_col() + 
+    facet_wrap(~fecha, scales = "free_y") +
+    coord_flip()+
+    labs(y ="ISEF estandarizado", x="capitulos") +
+    tema_graf
+})
+
+dev.off()  
+```
+
+# Obtenemos ISEF por fecha y capítulo para el IPOM
+```{r}
+IPOM1 <- IPOM  %>% group_by(fecha) %>% ungroup() %>%  arrange(fecha,ISEF_std) 
+IPOM1 <-IPOM1[order(IPOM1$fecha, IPOM1$ISEF_std),]
+IPOM1$rownumber = 1:nrow(IPOM1)
+
+IPOM1$prop <- prop.table(IPOM1$ISEF_std)*100
+#View(DF1)
+IPOM1$Mes = str_sub(IPOM1$fecha,-2,-1)
+IPOM1
+```
+
+
+# Lo graficamos según fecha: 
+```{r}
+
+png(paste0(pathy,"IPOM_tercer_trim1.png"), width=2500,height=1300)
+#png("ief_positive.png", width=2500,height=1300)
+tema_graf <-
+  theme_minimal() +
+  theme(text = element_text(family = "serif"), axis.text=element_text(size=18,face="bold"),
+        axis.title=element_text(size=30,face="bold"), strip.text = element_text(size=18,face="bold"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        strip.background = element_rect(fill = "#EBEBEB", colour = NA),
+        legend.position = "none",
+        legend.box.background = element_rect(fill = "#EBEBEB", colour = NA))
+
+#%# TODOS:
+#IPOM_1 <- IPOM1[1:46,]
+#IPOM_1 <- IPOM1[47:98,]
+#IPOM_1 <- IPOM1[99:157,]
+#IPOM_1 <- IPOM1[158:217,]
+#IPOM_1 <- IPOM1[218:277,]
+#IPOM_1 <- IPOM1[278:337,]
+#IPOM_1 <- IPOM1[338:377,]
+
+#%# Terceros trimestres
+
+
+IPOM_1 <- IPOM1[IPOM1$Mes == "09",]
+#IPOM_1<-IPOM_1[57:106,]
+IPOM_1<-IPOM_1[1:56,]
+map(c("IPOM capitulos"), function(freq10) {
+  IPOM_1 %>%
+    group_by(fecha) %>%
+    ggplot() +
+    aes(x=capitulo, y=ISEF_std, fill=fecha) + #REEMPLAZAR FREC POR PROP PARA OBTENER LOS PORCENTAJES CREO
+    geom_col() + 
+    facet_wrap(~fecha, scales = "free_y") +
+    coord_flip()+
+    labs(y ="ISEF estandarizado", x="capitulos") +
+    tema_graf
+})
+
+dev.off()  
+```
