@@ -1,0 +1,54 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+En base a los txt del cuerpo del IPoM e IEF obtenemos:
+
+#Primero obtenemos los IPoM juntos
+```{r}
+path_IPoM="C:/Users/Asus/Desktop/Practica/Codigos_IPoM/cuerpo/cuerpoIPoM_x_palabra/"
+files_IPoM<- dir(path_IPoM, pattern = "*.txt", full.names = TRUE)
+tabla_IPoM <-data.frame()
+
+for (f in files_IPoM){
+  DF <- read.csv(f)
+  DF <- as.character(DF[,2]) %>% unlist()
+  tabla_aux1 <- data.frame(table(DF))
+  #tabla_aux$fecha<- as.character(gsub(".txt", "", f))
+  tabla_IPoM <- rbind(tabla_IPoM, tabla_aux1)
+}
+#View(tabla_IPoM)
+
+```
+
+
+#Obtenemos los IEF
+```{r}
+path_IEF="C:/Users/Asus/Desktop/Practica/Codigos_IEF/cuerpo/cuerpoIEF_x_palabra/"
+files_IEF<- dir(path_IEF, pattern = "*.txt", full.names = TRUE)
+tabla_IEF <-data.frame()
+
+for (f in files_IEF){
+  DF <- read.csv(f)
+  DF <- as.character(DF[,2]) %>% unlist()
+  tabla_aux <- data.frame(table(DF))
+  #tabla_aux$fecha<- as.character(gsub(".txt", "", f))
+  tabla_IEF <- rbind(tabla_IEF, tabla_aux)
+}
+
+```
+
+
+
+#Los unimos
+```{r}
+DF <- rbind(tabla_IEF, tabla_IPoM)
+View(DF)
+names(DF)[2] <- "Frec"
+names(DF)[1] <- "palabra"
+DF_agregado <- DF %>%group_by(palabra) %>% summarise_all(sum)
+DF_agregado <-DF_agregado[order(-DF_agregado$Frec),]
+View(DF_agregado)
+write.csv(DF_agregado, "C:/Users/Asus/Desktop/Practica/DF_agregado_IPoMeIEF.txt", row.names=FALSE, quote=FALSE)
+```
